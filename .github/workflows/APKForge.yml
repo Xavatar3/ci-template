@@ -1,0 +1,275 @@
+name: APKForge CI v1.0 – Build, Test & Artifact Upload
+
+on:
+  workflow_dispatch:
+  
+  workflow_call:
+    inputs:
+      name:
+        description: "Android Project/Repo"
+        required: false
+        type: string
+        default: "APK"
+      build-type:
+         description: |
+          Build Variant (debug/release)
+           => Release = signed, optimized, ready for Play Store.
+           => Debug = unsigned, faster, for testing.
+         required: false
+         type: string
+         default: "Debug"
+      java-version:
+        description: "JDK version"
+        type: string
+        required: false
+        default: "17"
+      api-level:
+        description: "Android Version"
+        type: number
+        required: false
+        default: 34 # Android 14, Upside Down Cake
+      ndk:
+        description: "NDK Version"
+        required: false
+        type: string
+        default: ''
+      cmake:
+        description: "CMake Version"
+        required: false
+        type: string
+        default: ''
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64 Android Keystore"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Android keystore Password"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Android Keystore Alias"
+        required: false
+
+env:
+  PROJECT_NAME: ${{ inputs.name }}
+  BUILD_TYPE: ${{ inputs.build-type }}
+  JAVA_VERSION: ${{ inputs.java-version }}
+  ANDROID_API_LEVEL: ${{ inputs.api-level }}
+  NDK_VERSION: ${{ inputs.ndk }}
+  CMAKE_VERSION: ${{ inputs.cmake }}
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.configuration-cache=true"
+  CI: "true"
+
+  # Optional signing envs (populate via secrets)
+  ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+  ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+  ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: .
+
+#concurrency:
+  #group: ${{ github.workflow }}-${{ github.ref }}
+  #cancel-in-progress: true
+
+permissions:
+  contents: read
+  #actions: read
+
+jobs:
+  APKForge:
+    name: Forge ${{ inputs.name }}
+    runs-on: ubuntu-latest
+    
+    #concurrency:
+      #group: ${{ github.workflow }}-${{ github.ref }}
+      #cancel-in-progress: true
+    
+    env:
+      CI: true
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.configuration-cache=true"
+    
+    steps:
+      - name: Validate Build Type
+        run: |
+          BUILD_TYPE="$BUILD_TYPE"
+          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
+          case "$BUILD_TYPE_LOWER" in debug|release)
+            echo "Build type valid ✅"
+            echo "Build type valid ✅ ($BUILD_TYPE)"
+            ;;
+          *)
+            4echo "Invalid build type: $BUILD_TYPE"
+            exit 1
+            ;;
+          esac
+        #BUILD_TYPE="${{ inputs.build-type | downcase }}"
+        
+      # Checkout the Current Repo
+      - name: Checkout ${{ inputs.name }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+        
+      # Set up JDK
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          architecture: x64
+          java-package: jdk
+        
+      # Cache Gradle dependencies
+      - name: 📦 Cache Gradle Packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper/
+          key: gradle-cache-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles(
+              '**/*.gradle',
+              '**/*.gradle.kts',
+              '**/settings.gradle',
+              '**/settings.gradle.kts',
+              '**/gradle.properties',
+              '**/gradle-wrapper.properties',
+              '**/libs.versions.toml'
+            ) }}
+          restore-keys: |
+            gradle-cache-${{ runner.os }}-${{ github.ref_name }}-
+            gradle-cache-${{ runner.os }}-main-
+        
+      # Set up Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ inputs.api-level }}
+          build-tools: "34.0.0"
+          ndk: ${{ inputs.ndk }}
+          cmake: ${{ inputs.cmake }}
+          accept-licenses: true
+        
+      # Assign Permissions
+      - name: Assign Permissions
+        run: |
+          chmod +x ./gradlew
+          
+        
+      - name: Log Environment
+        run: |
+          java -version
+          ./gradlew --version
+          echo "API Level: $ANDROID_API_LEVEL"
+          echo "Build Type: $BUILD_TYPE"
+        
+      # Perform Unit and Lint Test
+      - name: Lint Test 🧪
+        run: |
+          ./gradlew test lint --continue --stacktrace
+        
+      # 5️⃣ Run Gradle build
+      - name: Build APK
+        run: |
+          set -e
+          set -o pipefail
+          echo "Building project: $PROJECT_NAME with build type $BUILD_TYPE"
+          #./gradlew clean assemble$BUILD_TYPE
+          ./gradlew clean assemble$BUILD_TYPE --stacktrace
+        
+      # 6️⃣ Upload APK artifact
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}-${{ inputs.build-type }}-apk
+          path: |
+            "**/build/outputs/apk/${{ inputs.build-type }}/*.apk"
+          retention-days: 365
+
+
+
+# To: The Future at 3:00 AM
+# Maintain version consistency for all actions and dependencies:
+#   - setup-java, setup-android, cache, upload-artifact, etc.
+#   - Lock JDK to a fixed release (e.g., 17.0.10)
+#   - Lock SDK tools, Gradle, NDK, and CMake versions across CI runs
+# Ensure build SDK and target SDK in build.gradle are explicitly defined for reproducible builds
+# Cache NDK, SDK tools, Gradle wrapper, dependencies, and build outputs to speed up builds
+# Optionally set up an Android emulator for UI or instrumentation testing in CI
+# Configure necessary SDK components, cmdline-tools version, Gradle, and NDK/preview components
+# Make NDK and CMake optional; only install/use if explicitly provided
+# Organize Gradle caches in groups for faster incremental builds
+# Configure caching options thoroughly:
+#   - Gradle wrapper
+#   - Dependencies
+#   - Build outputs
+#   - Configuration cache
+# Enable Gradle build cache and parallel builds for faster CI
+# Disable Gradle daemon for CI (org.gradle.daemon=false)
+# Enable configuration cache (org.gradle.configuration-cache=true)
+# Enable parallel execution (org.gradle.parallel=true)
+# Set up versioning strategies:
+#   - Semantic versioning, build numbers, commit hashes, timestamps
+# Support multiple build variants: pro, beta, alpha, production, debug, etc.
+# Maintain multiple Gradle caches (wrapper vs dependencies) for efficiency
+# Enable detailed logging for:
+#   - Cache hits/misses
+#   - Build time usage
+#   - Anomalies and errors
+# Normalize and validate all inputs:
+#   - Build type: Debug/Release (case-insensitive)
+#   - Correct data types and formats
+# Add artifact transport scripts:
+#   - Archive APKs to external storage, museum, or artifact server
+#   - Track cache storage and runtime per build
+# Verify build types allowed: ["Debug", "Release"]
+# Automatically detect missing SDK components and install only necessary ones
+# Validate Gradle version and lock it for reproducibility
+# Add notifications for failed builds, cache misses, or anomalies
+# Plan automated tests for pre/post build validation
+
+# To: Future me when idle
+# Standardize qualities of “good code”:
+#   - Well-structured, modular, readable
+#   - Defensive and paranoid (anticipate edge cases)
+#   - Self-healing and resilient (handles partial failures gracefully)
+#   - Flexible/plastic (easy to extend or modify)
+#   - Philosophical: maintain code state, formats, and workflow philosophy consistently
+# Write scripts to enforce structure, formatting, and CI conventions
+# Prevent text editors from corrupting formatting (italics, Markdown, special characters)
+# Collect, organize, and suggest WhatsApp stickers, emojis, and messages programmatically
+# Automate code reviews for:
+#   - Style
+#   - Security
+#   - Correctness
+# Integrate pre-commit hooks for:
+#   - Formatting
+#   - Linting
+#   - Input validation
+# Manage artifact repository for personal and CI builds
+# Build a “CI health dashboard” to monitor:
+#   - Caches
+#   - Build times
+#   - Resource usage
+#   - Anomalies
+# Add smart logging for CI runs to track usage patterns and runtime stats
+# Suggest automation to archive, categorize, and backup artifacts (APKs, reports, logs)
+
+# new unformatted comments here
+# add input validation to a separate module and expand it. add environment- setup module and logging module. unit and ljnt test module. build, upload and back up module, comments module
+# version the ci
+
+# future_todo.yml
+# TODO: Maintain version consistency for all actions
+# TODO: Make NDK & CMake optional
+# TODO: Archive artifacts to museum/server
+# TODO: Lock JDK & resource versions
+# TODO: Enable Gradle configuration cache & parallel builds
+# TODO: Standardize code quality, formatting, logging
+# shorten CI name if too long
+# have a schema for IDEs
+# make build type input case insensitive
+# arrange in logical order
+# auto tagging
