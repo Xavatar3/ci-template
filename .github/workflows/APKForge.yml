@@ -9,15 +9,15 @@ on:
         description: "Android Project/Repo"
         required: false
         type: string
-        default: "APK"
+        default: "Android App"
       build-type:
          description: |
           Build Variant (debug/release)
            => Release = signed, optimized, ready for Play Store.
            => Debug = unsigned, faster, for testing.
-         required: false
+         required: true
          type: string
-         default: "Debug"
+         default: 'Debug'
       java-version:
         description: "JDK version"
         type: string
@@ -93,21 +93,20 @@ jobs:
     steps:
       - name: Validate Build Type
         run: |
-          BUILD_TYPE="$BUILD_TYPE"
-          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          case "$BUILD_TYPE_LOWER" in debug|release)
-            echo "Build type valid ✅"
-            echo "Build type valid ✅ ($BUILD_TYPE)"
+          BUILD_TYPE=$BUILD_TYPE
+          BUILD_TYPE_LOWER=$(echo $BUILD_TYPE | tr '[:upper:]' '[:lower:]')
+           case $BUILD_TYPE_LOWER in debug|release)
+            echo "Build type valid($BUILD_TYPE) ✅ "
             ;;
           *)
-            4echo "Invalid build type: $BUILD_TYPE"
+            echo "Invalid build type: $BUILD_TYPE"
             exit 1
             ;;
           esac
         #BUILD_TYPE="${{ inputs.build-type | downcase }}"
         
       # Checkout the Current Repo
-      - name: Checkout ${{ inputs.name }}
+      - name: Checkout ${{ inputs.name }} Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -273,3 +272,5 @@ jobs:
 # make build type input case insensitive
 # arrange in logical order
 # auto tagging
+# Configure git in runner and garbage Collection
+# auto detect app name
